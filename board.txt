@@ -1,4 +1,4 @@
-# WiFiManagerESP build property overrides
+# ESP32_WiFiManager build property overrides
 #
 build.partitions=partitions.csv
 build.filesystem=littlefs

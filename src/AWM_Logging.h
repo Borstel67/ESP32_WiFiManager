@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// AWM_Logging.h – Logging-Makros für WiFiManagerESP
+// AWM_Logging.h – Logging-Makros für ESP32_WiFiManager
 //
 // Konfiguration (vor dem ersten #include definieren):
 //   AWM_ENABLE_LOG  – 0 = aus, 1 = an           (Standard: 1)

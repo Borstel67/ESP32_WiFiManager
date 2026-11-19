@@ -1,4 +1,4 @@
-# WiFiManagerESP
+# ESP32_WiFiManager
 
 Umfassender WLAN-Manager für ESP32 mit Captive-Portal, OTA (Firmware + LittleFS), Web-UI und automatischer Fallback-Logik. Provisionierung erfolgt wahlweise per SoftAP/Captive-Portal oder über die STA-UI, Daten liegen in LittleFS. OTA wird über ElegantOTA bereitgestellt.
 
@@ -16,7 +16,7 @@ Umfassender WLAN-Manager für ESP32 mit Captive-Portal, OTA (Firmware + LittleFS
 - **LED-/Button-Handling**, **mDNS** (`<hostname>.local`), **NTP**.
 
 ## Projektstruktur (relevant)
-- `WiFiManagerESP.ino` — Beispiel-Sketch (Startlogik, LED/Button, OTA-Init).
+- `ESP32_WiFiManager.ino` — Beispiel-Sketch (Startlogik, LED/Button, OTA-Init).
 - `src/ESPWiFiManagerAP.*` — AP/Captive-Portal, Scan, OTA, mDNS, Fallback.
 - `src/ESPWiFiManagerSTA.*` — STA-Server, `/api/sta/config`, optional Captive-Redirect.
 - `src/ESPWiFiManagerCommon.*` — Utilities (Credentials, `config.json`, NTP, File-Streaming).
@@ -57,6 +57,19 @@ Umfassender WLAN-Manager für ESP32 mit Captive-Portal, OTA (Firmware + LittleFS
 - STA: `/`, `/settings`, `/api/sta/config` (GET/POST), `/erase` (POST), `/WifiManager.css`
 - Captive-Redirects: `/generate_204`, `/gen_204`, `/hotspot-detect.html`, `/connecttest.txt`, `/ncsi.txt`, `/fwlink`
 - OTA: `/update` (ElegantOTA)
+
+## Admin-Zugang
+- `ADMIN_USER` / `ADMIN_PASS` im Sketch (oder per Build-Flag `-DADMIN_PASS=...`) – **Standardpasswort unbedingt ändern**.
+- Schützt den kompletten STA-Webserver (HTTP Digest), ElegantOTA `/update` (AP + STA) und ArduinoOTA.
+- `ADMIN_PASS ""` deaktiviert den Schutz.
+- POST-Endpunkte (`/erase`, `/api/sta/config`) verlangen zusätzlich den Header `X-Requested-With` (CSRF-Schutz).
+
+## OTA-Rollback
+- Nach einem Update (ElegantOTA oder ArduinoOTA) startet die neue Firmware als *pending verify*.
+- Bestätigt wird sie, wenn sie `OTA_CONFIRM_MS` (30 s) durchgehend mit dem WLAN verbunden ist – ohne gespeicherte Zugangsdaten genügt stabiler Betrieb.
+- Wird das bis `OTA_ROLLBACK_MS` (5 min) nach dem Start nicht erreicht, oder stürzt die Firmware vorher ab (Panic, Watchdog, Reset), startet automatisch wieder die vorherige Firmware.
+- Gewollte Neustarts (Speichern im Portal, Werkseinstellung) bestätigen die Firmware vorher.
+- Voraussetzung: Bootloader mit `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` (Standard im Arduino-ESP32-Core 3.x) und 2 OTA-Partitionen.
 
 ## Persistenz
 - `config.json`/NVS: SSID, Passwort, DHCP/static (IP/GW/SN/DNS), Hostname, NTP.  

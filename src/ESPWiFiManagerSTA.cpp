@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// WiFiManagerESP STA-Webserver-Implementierung:
+// ESP32_WiFiManager STA-Webserver-Implementierung:
 // - Start nur bei bestehender STA-Verbindung
 // - Routen für UI/Assets und API (/api/sta/config)
 // - OTA via ElegantOTA
@@ -32,10 +32,25 @@ ESPWiFiManagerSTA::ESPWiFiManagerSTA()
 
 void ESPWiFiManagerSTA::setHtmlPathPrefix(const String& prefix) { htmlPathPrefix = prefix.endsWith("/") ? prefix : prefix + "/"; }
 void ESPWiFiManagerSTA::setHostname(const String& host) { hostname = host; }
-void ESPWiFiManagerSTA::enableDhcp(bool enabled) { dhcpEnabled = enabled; }
-void ESPWiFiManagerSTA::setStaticIP(const IPAddress& ip, const IPAddress& gateway, const IPAddress& subnet,
-const IPAddress& dns1, const IPAddress& dns2) {
-	staticIP = ip; staticGW = gateway; staticSN = subnet; staticDNS1 = dns1; staticDNS2 = dns2; dhcpEnabled = false;
+
+void ESPWiFiManagerSTA::setAdminAuth(const String& user, const String& pass) {
+	authEnabled = pass.length() > 0;
+	authUser = user.length() ? user : String("admin");
+	authPass = pass;
+	if (!authEnabled) return;
+	authMw.setUsername(authUser.c_str());
+	authMw.setPassword(pass.c_str());
+	authMw.setRealm("ESP32_WiFiManager");
+	authMw.setAuthType(AsyncAuthType::AUTH_DIGEST);   // Passwort nicht im Klartext über HTTP
+	authMw.generateHash();
+}
+
+// CSRF-Schutz: fremde Webseiten können per Formular keine eigenen Header setzen
+// (fetch mit Custom-Header erzwingt einen CORS-Preflight, den der Server nicht erlaubt)
+static bool isSameOriginApiCall(AsyncWebServerRequest* r) {
+	if (r->hasHeader("X-Requested-With")) return true;
+	r->send(403, "application/json", "{\"ok\":false,\"error\":\"Forbidden\"}");
+	return false;
 }
 
 // Startet den STA-Webserver (nur wenn bereits verbunden); richtet Routen und OTA ein.
@@ -48,8 +63,10 @@ bool ESPWiFiManagerSTA::startSTA(uint16_t port) {
 
 	serverPort = port;
 	if (!routesReady) {
+		if (authEnabled) staServer.addMiddleware(&authMw);   // gilt für alle Routen inkl. ElegantOTA
 		setupHTTPRoutes();
-		ElegantOTA.begin(&staServer);
+		// ElegantOTA ist global: begin() setzt die Zugangsdaten jedes Mal neu
+		ElegantOTA.begin(&staServer, authUser.c_str(), authPass.c_str());
 		routesReady = true;
 	}
 	staServer.begin();
@@ -57,6 +74,7 @@ bool ESPWiFiManagerSTA::startSTA(uint16_t port) {
 	serverRunning = true;
 	AWM_LOGI("🌐 STA HTTP-Server gestartet auf http://%s:%u", WiFi.localIP().toString().c_str(), (unsigned)serverPort);
 	AWM_LOGI("🛠  ElegantOTA aktiv (STA) unter /update");
+	if (!authEnabled) AWM_LOGW("⚠️ STA-Server ohne Admin-Passwort – jeder im LAN hat Vollzugriff");
 	return true;
 }
 
@@ -70,7 +88,10 @@ void ESPWiFiManagerSTA::stopSTA() {
 
 // Im loop() aufrufen: führt verzögerten Neustart nach /erase aus
 void ESPWiFiManagerSTA::handleClient() {
-	if (restartPending && millis() - restartReqAt >= 500) ESP.restart();
+	if (restartPending && millis() - restartReqAt >= 500) {
+		otaConfirmFirmware("Neustart nach Werkseinstellung");
+		ESP.restart();
+	}
 }
 
 // HTTP-Routen für UI/Assets/API
@@ -78,7 +99,6 @@ void ESPWiFiManagerSTA::setupHTTPRoutes() {
 	staServer.on("/", HTTP_GET, [this](AsyncWebServerRequest* r) { handleRoot(r); });
 	staServer.on("/WifiManager.css", HTTP_GET, [this](AsyncWebServerRequest* r) { handleCss(r); });
 	staServer.on("/settings", HTTP_GET, [this](AsyncWebServerRequest* r) { handleSettings(r); });
-	staServer.on("/settingsSTA.html", HTTP_GET, [this](AsyncWebServerRequest* r) { handleSettings(r); });
 	staServer.on("/api/sta/config", HTTP_GET, [this](AsyncWebServerRequest* r) { handleStaConfigGet(r); });
 	staServer.on("/api/sta/config", HTTP_POST, [this](AsyncWebServerRequest* r) { handleStaConfigSave(r); });
 
@@ -132,7 +152,7 @@ void ESPWiFiManagerSTA::handleNotFound(AsyncWebServerRequest* request) {
 	AWM_LOGW("⚠️ 404: %s", request->url().c_str());
 }
 
-// Lädt STA-bezogene Parameter aus /config.json (DHCP/static, DNS, Hostname, NTP)
+// Lädt STA-bezogene Parameter aus NVS (DHCP/static, DNS, Hostname, NTP)
 void ESPWiFiManagerSTA::loadCredentials() {
 	JsonDocument doc;
 	if (!loadConfigDoc(doc)) { AWM_LOGI("ℹ️ Keine gültige Config in NVS."); return; }
@@ -188,8 +208,9 @@ void ESPWiFiManagerSTA::handleStaConfigGet(AsyncWebServerRequest* request) {
 	request->send(200, "application/json", out);
 }
 
-// POST /api/sta/config: validiert Eingaben, speichert nach /config.json
+// POST /api/sta/config: validiert Eingaben, speichert in NVS
 void ESPWiFiManagerSTA::handleStaConfigSave(AsyncWebServerRequest* request) {
+	if (!isSameOriginApiCall(request)) return;
 	String dhcpRaw = request->arg("dhcp");
 	dhcpRaw.toLowerCase();
 	const bool useDhcp = (dhcpRaw == "1" || dhcpRaw == "true" || dhcpRaw == "on");
@@ -221,7 +242,7 @@ void ESPWiFiManagerSTA::handleStaConfigSave(AsyncWebServerRequest* request) {
 	request->send(200, "application/json", "{\"ok\":true}");
 }
 
-// Persistiert STA-Parameter in /config.json; erhält andere Keys falls vorhanden
+// Persistiert STA-Parameter in NVS; erhält andere Keys falls vorhanden
 bool ESPWiFiManagerSTA::saveStaConfigToJson(bool useDhcp,
 	const String& ip,
 	const String& gw,
@@ -247,14 +268,15 @@ bool ESPWiFiManagerSTA::saveStaConfigToJson(bool useDhcp,
 
 	String out;
 	serializeJson(doc, out);
-	if (!saveConfigJson(out)) { AWM_LOGE("❌ Konnte /config.json nicht schreiben"); return false; }
-	AWM_LOGI("✅ STA-Netzwerkparameter in /config.json gespeichert (DHCP=%s)", useDhcp ? "ja" : "nein");
+	if (!saveConfigJson(out)) { AWM_LOGE("❌ Konnte Config nicht in NVS schreiben"); return false; }
+	AWM_LOGI("✅ STA-Netzwerkparameter in NVS gespeichert (DHCP=%s)", useDhcp ? "ja" : "nein");
 	return true;
 }
 
 // POST /erase: nutzt Common-Erase; Neustart erfolgt verzögert in handleClient(),
 // damit die Antwort noch ausgeliefert wird (kein delay() im AsyncTCP-Task)
 void ESPWiFiManagerSTA::handleErase(AsyncWebServerRequest* request) {
+	if (!isSameOriginApiCall(request)) return;
 	request->send(200, "application/json", "{\"ok\":true}");
 	::eraseCredentials();
 	restartReqAt = millis();

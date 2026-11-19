@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Gemeinsame Utilities für WiFiManagerESP (AP- und STA-Manager):
+// Gemeinsame Utilities für ESP32_WiFiManager (AP- und STA-Manager):
 // - IP-Parsing und STA-Netzkonfiguration aus NVS (/config)
 // - Credential-Storage (load/save/erase) in NVS
 // - Geschützte JSON-Whitelist und rekursive Bereinigung (LittleFS)
@@ -42,9 +42,18 @@ void eraseJsonInDir(const char* dirPath);
 bool syncTimeDefault(uint8_t tries = 20);
 
 // ArduinoOTA: Lazy-Init/Handler sowie Partition-Check
-void ensureArduinoOta(const String& hostname, uint16_t port, const String& password);
+bool ensureArduinoOta(const String& hostname, uint16_t port, const String& password);
 void handleArduinoOta();
 bool checkOtaAndDataPartitions(bool logDetails = false);
+
+// OTA-Rollback (benötigt im Sketch: extern "C" bool verifyRollbackLater() { return true; })
+// Neue Firmware startet als "pending verify". Ohne Bestätigung führt jeder Neustart
+// (Absturz, Watchdog, Reset) automatisch zurück zur vorherigen Firmware.
+void otaRollbackBegin();                       // in setup() aufrufen: Status/vorherigen Rollback loggen
+bool otaRollbackPending();                     // true, solange die laufende Firmware unbestätigt ist
+void otaConfirmFirmware(const char* reason);   // Firmware als gültig markieren (Rollback abbrechen)
+// Im loop(): bestätigt nach confirmAfterMs durchgehend "healthy", rollt nach timeoutMs ohne Erfolg zurück
+void otaRollbackLoop(bool healthy, uint32_t confirmAfterMs, uint32_t timeoutMs);
 
 // HTTP 302 → Root (no-cache); gemeinsam für AP und STA
 void redirectToRoot(AsyncWebServerRequest* request);

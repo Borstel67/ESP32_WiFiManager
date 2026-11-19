@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// WiFiManagerESP AP-/Captive-Portal-Manager:
+// ESP32_WiFiManager AP-/Captive-Portal-Manager:
 // - SoftAP + DNS-Catch-All + HTTP-Routen für Provisioning
 // - Fallback-Strategien und nicht-blockierender Auto-Reconnect
 // - Button-/LED-Handling, asynchroner WiFi-Scan, OTA (ElegantOTA), mDNS
@@ -56,6 +56,8 @@ public:
     void setReconnectBackoffMs(uint32_t ms);
     void setReconnectAttemptMs(uint32_t ms);
     void setExternalApActive(bool active);
+    // Zugangsdaten für ElegantOTA (/update) im Portal; leeres Passwort = kein Schutz
+    void setAdminAuth(const String& user, const String& pass);
 
     // Portal-Steuerung
     void openPortal();
@@ -142,6 +144,7 @@ private:
     String hostname;
     String apSSID = "WiFi Manager";
     String apPASS = "123456789";
+    String otaUser, otaPass;
 
     bool     captiveEnabled  = true;
     uint32_t portalTimeoutMs = 0;

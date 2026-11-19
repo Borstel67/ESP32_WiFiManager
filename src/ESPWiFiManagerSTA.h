@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// WiFiManagerESP STA-Webserver für Betrieb im verbundenen STA-Modus:
+// ESP32_WiFiManager STA-Webserver für Betrieb im verbundenen STA-Modus:
 // - HTTP-Routen für UI/Assets
 // - API für STA-Konfiguration (DHCP/static, DNS, Hostname, NTP)
 // - OTA via ElegantOTA
@@ -29,9 +29,9 @@ public:
 
 	void setHtmlPathPrefix(const String& prefix);
 	void setHostname(const String& host);
-	void enableDhcp(bool enabled);
-	void setStaticIP(const IPAddress& ip, const IPAddress& gateway, const IPAddress& subnet,
-		const IPAddress& dns1 = IPAddress(0, 0, 0, 0), const IPAddress& dns2 = IPAddress(0, 0, 0, 0));
+	// Admin-Zugang (HTTP Digest) für alle Seiten inkl. /update; vor startSTA() aufrufen.
+	// Leeres Passwort = kein Schutz.
+	void setAdminAuth(const String& user, const String& pass);
 
 	bool isRunning() const { return serverRunning; }
 	uint16_t getPort() const { return serverPort; }
@@ -60,6 +60,9 @@ private:
 	bool parseIP(const String& text, IPAddress& out);
 
 	AsyncWebServer   staServer;
+	AsyncAuthenticationMiddleware authMw;
+	bool    authEnabled = false;
+	String  authUser, authPass;
 
 	String  htmlPathPrefix;
 	String  hostname;

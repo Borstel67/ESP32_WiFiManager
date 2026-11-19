@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Sketch für WiFiManagerESP (AP + STA + Captive Portal + OTA)
+// Sketch für ESP32_WiFiManager (AP + STA + Captive Portal + OTA)
 // Ablauf:
 //  - Start: versucht STA-Verbindung mit gespeicherten Zugangsdaten
 //  - Fallback: öffnet Captive-Portal (AP+DNS) zur Neukonfiguration
@@ -7,6 +7,7 @@
 //    im Betrieb öffnet ein Tastendruck ≥ SHORT_PRESS_MS das Portal
 //  - Verbindungsverlust: nicht-blockierender Reconnect, nach LOST_PORTAL_MS Portal
 //  - OTA über ElegantOTA (/update) und ArduinoOTA im AP- und STA-Modus verfügbar
+//  - OTA-Rollback: neue Firmware muss sich bewähren, sonst Rückkehr zur vorherigen
 
 #include <Arduino.h>
 #ifndef ELEGANTOTA_USE_ASYNC_WEBSERVER
@@ -26,12 +27,28 @@
 #define BTN_PIN 0          // Provisioning-Taster, LOW-aktiv; -1 zum Deaktivieren
 #endif
 
+// ----- Admin-Zugang -----
+// Schützt STA-Weboberfläche, ElegantOTA (/update) und ArduinoOTA.
+// UNBEDINGT ändern (oder per Build-Flag -DADMIN_PASS=... setzen); "" = ohne Schutz.
+#ifndef ADMIN_USER
+#define ADMIN_USER "admin"
+#endif
+#ifndef ADMIN_PASS
+#define ADMIN_PASS "esp32admin"
+#endif
+
 // ----- Timing / Netzwerk -----
 static const char*    DEFAULT_HOSTNAME  = "ESPDevice";  // wird durch "hostname" aus der Config überschrieben
 static const uint32_t SHORT_PRESS_MS    = 700;          // Tastendauer für Portal-Trigger
 static const uint32_t LOST_PORTAL_MS    = 60000;        // Portal öffnen, wenn so lange keine Verbindung
 static const uint32_t PORTAL_TIMEOUT_S  = 300;          // Portal schließen nach Inaktivität (nur mit Credentials)
 static const uint16_t OTA_PORT          = 3232;
+static const uint32_t OTA_CONFIRM_MS    = 30000;        // so lange "gesund" → neue Firmware bestätigen
+static const uint32_t OTA_ROLLBACK_MS   = 300000;       // bis dahin nicht bestätigt → Rollback
+
+// Rollback-Entscheidung nicht dem Core überlassen (der bestätigt sofort beim Boot),
+// sondern im loop() per Selbsttest treffen
+extern "C" bool verifyRollbackLater() { return true; }
 
 // ----- Manager-Instanzen -----
 // Der AP-Manager wertet beim Boot immer einen Taster aus (Default GPIO0 = BOOT-Taste)
@@ -64,8 +81,7 @@ static void ensureOtaReady() {
 	if (otaReady) return;
 	String h = WiFi.getHostname();
 	if (!h.length()) h = DEFAULT_HOSTNAME;
-	ensureArduinoOta(h, OTA_PORT, "");
-	otaReady = true;
+	otaReady = ensureArduinoOta(h, OTA_PORT, ADMIN_PASS);
 }
 
 // Öffnet das Captive-Portal; STA-Server vorher stoppen (beide nutzen Port 80)
@@ -88,8 +104,11 @@ void setup() {
 	}
 
 	Serial.println("ESPWiFiManagerAP v" AWM_VERSION);
+	otaRollbackBegin();
 
 	wifiManagerAP.setHostname(DEFAULT_HOSTNAME);
+	wifiManagerSTA.setAdminAuth(ADMIN_USER, ADMIN_PASS);
+	wifiManagerAP.setAdminAuth(ADMIN_USER, ADMIN_PASS);
 	wifiManagerAP.setFallbackPolicy(ESPWiFiManagerAP::FallbackPolicy::ON_FAIL);
 	wifiManagerAP.begin();   // lädt Credentials + Hostname aus NVS
 	// Timeout nur mit Credentials: sonst würde WiFi nach dem Schließen komplett abgeschaltet
@@ -156,6 +175,9 @@ void loop() {
 			startPortalNow("connection lost");
 		}
 	}
+
+	// OTA-Rollback-Selbsttest: gesund = verbunden, bzw. ohne Zugangsdaten = läuft stabil
+	otaRollbackLoop(connected || !wifiManagerAP.hasCredentials(), OTA_CONFIRM_MS, OTA_ROLLBACK_MS);
 
 	// Status-Log alle 5 s
 	static uint32_t lastStatus = 0;

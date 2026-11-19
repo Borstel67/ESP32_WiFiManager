@@ -2,9 +2,9 @@
 # .\Clone-VSProject.ps1 -NewName ComfoAirMQTTESP -CopyVmHeader -PatchSolution
 param(
     [Parameter(Mandatory = $true)] [string]$NewName,
-    [string]$SourceName = "WiFiManagerESP",
+    [string]$SourceName = "ESP32_WiFiManager",
     [string]$Root       = (Get-Location).Path,
-    [switch]$CopyVmHeader,      # kopiert __vm\.WiFiManagerESP.vsarduino.h
+    [switch]$CopyVmHeader,      # kopiert __vm\.ESP32_WiFiManager.vsarduino.h
     [switch]$PatchSolution      # ersetzt Namen/Pfade in erster gefundenen .sln
 )
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// AP-/Captive-Portal-Implementierung für WiFiManagerESP
+// AP-/Captive-Portal-Implementierung für ESP32_WiFiManager
 #include "ESPWiFiManagerAP.h"
 #include "AWM_Logging.h"
 #include "ESPWiFiManagerCommon.h"
@@ -41,6 +41,7 @@ void ESPWiFiManagerAP::setSmartRetries(uint8_t r, uint32_t w)  { maxFailRetries 
 void ESPWiFiManagerAP::enableButtonPortal(bool en)             { allowButtonPortal = en; }
 void ESPWiFiManagerAP::setAutoReconnect(bool en)               { autoReconnect = en; WiFi.setAutoReconnect(en); }
 void ESPWiFiManagerAP::setExternalApActive(bool a)             { externalApActive = a; AWM_LOGI("⚙️  Externer AP: %s", a ? "ja" : "nein"); }
+void ESPWiFiManagerAP::setAdminAuth(const String& u, const String& p) { otaUser = u; otaPass = p; }
 bool ESPWiFiManagerAP::isExternalApActive() const              { return externalApActive; }
 
 void ESPWiFiManagerAP::setReconnectBackoffMs(uint32_t ms) {
@@ -93,6 +94,7 @@ void ESPWiFiManagerAP::run() {
                 setLedPatternManual(LedPattern::BLINK_TRIPLE);
                 AWM_LOGW("🩹 Hold ≥5 s → Credentials löschen und Neustart");
                 eraseCredentials();
+                otaConfirmFirmware("Werkseinstellung per Taster");
                 delay(900);
                 ESP.restart();
             } else if (held >= 2000) setLedPatternManual(LedPattern::BLINK_DOUBLE);
@@ -139,7 +141,10 @@ void ESPWiFiManagerAP::run() {
 
 void ESPWiFiManagerAP::update() {
     // Deferred Restart: Antwort erst ausliefern lassen, dann neu starten (überlauf-sicher)
-    if (_restartPending && millis() - _restartReqAt >= 500) ESP.restart();
+    if (_restartPending && millis() - _restartReqAt >= 500) {
+        otaConfirmFirmware("Neustart nach Portal-Aktion");
+        ESP.restart();
+    }
 
     if (dnsRunning) dns.processNextRequest();
     // Scan-Flag zurücksetzen, falls der Client /scan/result nie abfragt
@@ -170,7 +175,7 @@ void ESPWiFiManagerAP::startAP() {
     setupAP();
     if (!routesReady) {
         setupHTTPRoutes();
-        ElegantOTA.begin(&apServer);
+        ElegantOTA.begin(&apServer, otaUser.c_str(), otaPass.c_str());   // setzt globale OTA-Auth
         routesReady = true;
     }
     apServer.begin();
@@ -216,7 +221,6 @@ void ESPWiFiManagerAP::stopDNS() {
 void ESPWiFiManagerAP::setupHTTPRoutes() {
     apServer.on("/",              HTTP_GET,  [this](AsyncWebServerRequest* r) { handleRoot(r); });
     apServer.on("/settings",      HTTP_GET,  [this](AsyncWebServerRequest* r) { handleSettings(r); });
-    apServer.on("/settingsAP.html",HTTP_GET, [this](AsyncWebServerRequest* r) { handleSettings(r); });
     apServer.on("/save",          HTTP_POST, [this](AsyncWebServerRequest* r) { handleSave(r); });
     apServer.on("/WifiManager.css",HTTP_GET, [this](AsyncWebServerRequest* r) { handleCss(r); });
     // exact: "/scan" würde sonst auch "/scan/result" abfangen (Default-Matcher ^/scan(/.*)?$)
@@ -329,6 +333,11 @@ void ESPWiFiManagerAP::handleSave(AsyncWebServerRequest* request) {
             showErrorPage("Ungültige IP/Gateway/Subnetz.", request);
             return;
         }
+        if ((request->arg("dns1").length() && !parseIpText(request->arg("dns1"), tmp)) ||
+            (request->arg("dns2").length() && !parseIpText(request->arg("dns2"), tmp))) {
+            showErrorPage("Ungültiger DNS-Server.", request);
+            return;
+        }
     }
 
     JsonDocument doc;
@@ -359,6 +368,7 @@ void ESPWiFiManagerAP::handleSave(AsyncWebServerRequest* request) {
 
 void ESPWiFiManagerAP::handleErase(AsyncWebServerRequest* request) {
     if (captivePortalRedirect(request)) return;
+    if (!request->hasHeader("X-Requested-With")) { request->send(403, "application/json", "{\"ok\":false}"); return; }
     lastHttpAccess = millis();
     request->send(200, "application/json", "{\"ok\":true}");
     eraseCredentials();

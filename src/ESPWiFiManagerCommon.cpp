@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// WiFiManagerESP gemeinsame Utilities
+// ESP32_WiFiManager gemeinsame Utilities
 #include "ESPWiFiManagerCommon.h"
 #include "AWM_Logging.h"
 #include <ArduinoJson.h>
@@ -161,9 +161,9 @@ bool syncTimeDefault(uint8_t tries) {
 
 // ── ArduinoOTA ────────────────────────────────────────────────────────────────
 
-void ensureArduinoOta(const String& hostname, uint16_t port, const String& password) {
-    if (WiFi.getMode() == WIFI_OFF) return;
-    if (_otaStarted) return;
+bool ensureArduinoOta(const String& hostname, uint16_t port, const String& password) {
+    if (_otaStarted) return true;
+    if (WiFi.getMode() == WIFI_OFF) return false;   // später erneut versuchen
 
     String host = hostname;
     if (!host.length()) host = WiFi.getHostname();
@@ -181,6 +181,7 @@ void ensureArduinoOta(const String& hostname, uint16_t port, const String& passw
     ArduinoOTA.begin();
     _otaStarted = true;
     AWM_LOGI("[OTA] Bereit: %s:%u", host.c_str(), (unsigned)_otaPort);
+    return true;
 }
 
 void handleArduinoOta() {
@@ -226,6 +227,53 @@ bool checkOtaAndDataPartitions(bool logDetails) {
         AWM_LOGI("[PART] OTA-Slots=%u DATA-FS=%u → %s",
             (unsigned)otaCount, (unsigned)dataFsCount, ok ? "OK" : "NICHT OK");
     return ok;
+}
+
+// ── OTA-Rollback ──────────────────────────────────────────────────────────────
+
+static bool     _otaPending   = false;
+static uint32_t _healthySince = 0;
+
+void otaRollbackBegin() {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t st;
+    _otaPending = running && esp_ota_get_state_partition(running, &st) == ESP_OK &&
+                  st == ESP_OTA_IMG_PENDING_VERIFY;
+
+    const esp_partition_t* bad = esp_ota_get_last_invalid_partition();
+    if (bad) AWM_LOGW("[OTA] ⚠️ Vorheriges Update in '%s' war fehlerhaft → Rollback wurde ausgeführt", bad->label);
+
+    if (_otaPending) AWM_LOGW("[OTA] Neue Firmware in '%s' – wartet auf Bestätigung (sonst Rollback)", running->label);
+}
+
+bool otaRollbackPending() { return _otaPending; }
+
+void otaConfirmFirmware(const char* reason) {
+    if (!_otaPending) return;
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+        _otaPending = false;
+        AWM_LOGI("[OTA] ✅ Firmware bestätigt (%s)", reason ? reason : "-");
+    } else {
+        AWM_LOGE("[OTA] Bestätigung fehlgeschlagen");
+    }
+}
+
+void otaRollbackLoop(bool healthy, uint32_t confirmAfterMs, uint32_t timeoutMs) {
+    if (!_otaPending) return;
+    const uint32_t now = millis();   // Uptime seit Boot = Zeit seit Update
+    if (!healthy) {
+        _healthySince = 0;
+    } else {
+        if (!_healthySince) _healthySince = now ? now : 1;
+        if (now - _healthySince >= confirmAfterMs) { otaConfirmFirmware("Selbsttest bestanden"); return; }
+    }
+    if (now >= timeoutMs) {
+        AWM_LOGE("[OTA] ❌ Selbsttest nach %lu s nicht bestanden → Rollback", (unsigned long)(timeoutMs / 1000));
+        delay(100);
+        esp_ota_mark_app_invalid_rollback_and_reboot();   // kehrt nur zurück, wenn kein Rollback möglich
+        AWM_LOGE("[OTA] Rollback nicht möglich – Firmware wird beibehalten");
+        _otaPending = false;
+    }
 }
 
 // ── HTTP-Helpers ──────────────────────────────────────────────────────────────

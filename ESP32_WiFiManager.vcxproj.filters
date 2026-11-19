@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="WiFiManagerESP.ino" />
+    <ClCompile Include="ESP32_WiFiManager.ino" />
     <ClCompile Include="src\AWM_Logging.h">
       <Filter>Header Files</Filter>
     </ClCompile>
@@ -33,7 +33,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="__vm\.WiFiManagerESP.vsarduino.h">
+    <ClInclude Include="__vm\.ESP32_WiFiManager.vsarduino.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\ESPWiFiManagerSTA.h">

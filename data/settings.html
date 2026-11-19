@@ -76,7 +76,7 @@
                             <input id="sta-hostname" class="input grow" type="text" placeholder="mein-esp" />
                         </div>
 
-                        <p class="hint">Die Konfiguration wird in <code>/config.json</code> gespeichert und beim STA-Start geladen.</p>
+                        <p class="hint">Die Konfiguration wird im Gerätespeicher (NVS) gespeichert und beim nächsten Start übernommen.</p>
                         <div class="footer">
                             <button id="sta-btn-save" class="btn primary" type="submit">Speichern</button></div>
                     </form>
@@ -88,10 +88,10 @@
                 <summary><span>Erweiterte Optionen</span><span class="chev">▶</span></summary>
                 <div class="sec acc">
                     <div class="danger-zone">
-                        <h3>Gefährlicher Bereich <span class="pill">admin</span></h3>
+                        <h3>Werkseinstellung <span class="pill">admin</span></h3>
                         <p class="hint">
-                            Löschen der <code>config.json</code> Datei aus dem geschützten Bereich und starte das Gerät neu.<br>
-                            Schreiben Sie BESTÄTIGEN, um die Datei zu löschen
+                            Löscht alle gespeicherten Einstellungen (WLAN, Netzwerk, Hostname, NTP) und startet das Gerät neu.<br>
+                            Schreiben Sie BESTÄTIGEN, um fortzufahren.
                         </p>
                         <div class="row">
                             <label for="sta-confirm">Bestätigen</label>
@@ -99,7 +99,7 @@
                         </div>
                         <div class="row">
                             <label></label>
-                            <button id="sta-btn-erase" class="btn danger" type="button" disabled>🗑️ Anmeldedaten löschen und neu starten</button>
+                            <button id="sta-btn-erase" class="btn danger" type="button" disabled>🗑️ Auf Werkseinstellung zurücksetzen</button>
                             <button id="sta-btn-reload" class="btn ghost" type="button" style="display: none">Aktualisieren</button>
                         </div>
                         <p id="sta-erase-msg" class="hint" style="min-height: 1.2em"></p>
@@ -189,7 +189,7 @@
                             <label for="ap-ntp2">NTP 2</label><input id="ap-ntp2" name="ntp2" class="input grow" type="text" placeholder="time.nist.gov" /></div>
                         <div class="row">
                             <label for="ap-hostname">Hostname</label><input id="ap-hostname" class="input grow" name="hostname" type="text" placeholder="mein-esp" /></div>
-                        <p class="hint">Die Konfiguration wird in <code>/config.json</code> gespeichert und beim STA-Start geladen.</p>
+                        <p class="hint">Die Konfiguration wird im Gerätespeicher (NVS) gespeichert und beim nächsten Start übernommen.</p>
                         <div class="footer">
                             <button id="ap-btn-save" class="btn primary" type="submit">Speichern und verbinden</button></div>
                     </form>
@@ -200,10 +200,10 @@
                     <summary><span>Erweiterte Optionen</span><span class="chev">▶</span></summary>
                     <div class="sec acc">
                         <div class="danger-zone">
-                            <h3>Gefährlicher Bereich <span class="pill">admin</span></h3>
+                            <h3>Werkseinstellung <span class="pill">admin</span></h3>
                             <p class="hint">
-                                Löschen der <code>config.json</code> Datei aus dem geschützten Bereich und starte das Gerät neu.<br>
-                                Schreiben Sie BESTÄTIGEN, um die Datei zu löschen
+                                Löscht alle gespeicherten Einstellungen (WLAN, Netzwerk, Hostname, NTP) und startet das Gerät neu.<br>
+                                Schreiben Sie BESTÄTIGEN, um fortzufahren.
                             </p>
                             <div class="row">
                                 <label for="ap-confirm">Bestätigen</label>
@@ -211,7 +211,7 @@
                             </div>
                             <div class="row">
                                 <label></label>
-                                <button id="ap-btn-erase" class="btn danger" type="button" disabled>🗑️ Anmeldedaten löschen und neu starten</button>
+                                <button id="ap-btn-erase" class="btn danger" type="button" disabled>🗑️ Auf Werkseinstellung zurücksetzen</button>
                                 <button id="ap-btn-reload" class="btn ghost" type="button" style="display: none">Aktualisieren</button>
                             </div>
                             <p id="ap-erase-msg" class="hint" style="min-height: 1.2em"></p>
@@ -246,6 +246,34 @@
                     if (!r.ok) return null;
                     return await r.json();
                 } catch { return null; }
+            };
+
+            // Werkseinstellung: Button erst nach Eingabe von "BESTÄTIGEN" freigeben
+            const setupErase = (prefix) => {
+                const $ = (id) => root.querySelector("#" + prefix + "-" + id);
+                const confirm = $("confirm"), btn = $("btn-erase"), msg = $("erase-msg"), reload = $("btn-reload");
+                if (!confirm || !btn) return;
+                const label = btn.textContent;
+                confirm.addEventListener("input", () => {
+                    const ok = confirm.value.trim().toUpperCase() === "BESTÄTIGEN";
+                    btn.disabled = !ok;
+                    msg.textContent = ok ? "Bereit zum Zurücksetzen." : "";
+                });
+                btn.addEventListener("click", async () => {
+                    if (btn.disabled) return;
+                    btn.disabled = true; btn.textContent = "Wird zurückgesetzt…";
+                    msg.textContent = "Einstellungen werden gelöscht, Gerät startet neu…";
+                    try {
+                        const r = await fetch("/erase", { method: "POST", headers: { "X-Requested-With": "fetch" } });
+                        if (!r.ok) throw new Error("HTTP " + r.status);
+                        reload.style.display = "inline-block";
+                    } catch (e) {
+                        console.error(e);
+                        msg.textContent = "Fehler beim Zurücksetzen.";
+                        btn.disabled = false; btn.textContent = label;
+                    }
+                });
+                reload.addEventListener("click", () => location.reload());
             };
 
             const setupSta = (cfg) => {
@@ -292,40 +320,15 @@
                     body.set("ntp1", root.querySelector("#sta-ntp1").value.trim());
                     body.set("ntp2", root.querySelector("#sta-ntp2").value.trim());
                     try {
-                        const r = await fetch("/api/sta/config", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+                        const r = await fetch("/api/sta/config", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "fetch" }, body });
                         const j = await r.json();
                         if (!r.ok || !j.ok) { msg.className = "hint err"; msg.textContent = j.error || "Speichern fehlgeschlagen."; return; }
-                        msg.className = "hint ok"; msg.textContent = "Gespeichert. Werte werden bei STA-Start aus /config.json geladen.";
+                        msg.className = "hint ok"; msg.textContent = "Gespeichert. Änderungen werden beim nächsten Neustart wirksam.";
                     } catch { msg.className = "hint err"; msg.textContent = "Fehler beim Speichern."; }
                     finally { btnSave.disabled = false; btnSave.textContent = "Speichern"; }
                 });
 
-                const confirm = root.querySelector("#sta-confirm");
-                const btnErase = root.querySelector("#sta-btn-erase");
-                const eraseMsg = root.querySelector("#sta-erase-msg");
-                const btnReload = root.querySelector("#sta-btn-reload");
-                if (confirm && btnErase) {
-                    confirm.addEventListener("input", () => {
-                        const ok = confirm.value.trim().toUpperCase() === "BESTÄTIGEN";
-                        btnErase.disabled = !ok;
-                        if (eraseMsg) eraseMsg.textContent = ok ? "Bereit zum Löschen." : "";
-                    });
-                    btnErase.addEventListener("click", async () => {
-                        if (btnErase.disabled) return;
-                        btnErase.disabled = true; btnErase.textContent = "Wird gelöscht…";
-                        if (eraseMsg) eraseMsg.textContent = "Anmeldedaten werden gelöscht und Neustart…";
-                        try {
-                            const body = new URLSearchParams(); body.set("confirm", "BESTÄTIGEN");
-                            await fetch("/erase", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-                            if (btnReload) btnReload.style.display = "inline-block";
-                        } catch (e) {
-                            console.error(e);
-                            if (eraseMsg) eraseMsg.textContent = "Fehler beim Anfordern der Löschung.";
-                            btnErase.disabled = false; btnErase.textContent = "🗑️ Anmeldedaten löschen und neu starten";
-                        }
-                    });
-                    if (btnReload) btnReload.addEventListener("click", () => location.reload());
-                }
+                setupErase("sta");
             };
 
             const setupAp = () => {
@@ -336,7 +339,6 @@
                     ssid: $("#ap-ssid"), pass: $("#ap-password"), show: $("#ap-show"),
                     form: $("#ap-form"), btnSave: $("#ap-btn-save"),
                     apHost: root.querySelector("[data-ap-host]"), portalUrl: $("#ap-portal-url"),
-                    confirm: $("#ap-confirm"), btnErase: $("#ap-btn-erase"), eraseMsg: $("#ap-erase-msg"), btnReload: $("#ap-btn-reload"),
                     autoTxt: $("#ap-autoTxt")
                 };
                 if (els.apHost) els.apHost.textContent = "AP: " + (location.hostname || "192.168.4.1");
@@ -445,27 +447,7 @@
                     sf.querySelectorAll("input").forEach(i => i.disabled = !isStatic);
                 }));
 
-                if (els.confirm && els.btnErase) {
-                    els.confirm.addEventListener("input", () => {
-                        const ok = els.confirm.value.trim().toUpperCase() === "BESTÄTIGEN";
-                        els.btnErase.disabled = !ok; if (els.eraseMsg) els.eraseMsg.textContent = ok ? "Bereit zum Löschen." : "";
-                    });
-                    els.btnErase.addEventListener("click", async () => {
-                        if (els.btnErase.disabled) return;
-                        els.btnErase.disabled = true; els.btnErase.textContent = "Wird gelöscht…";
-                        if (els.eraseMsg) els.eraseMsg.textContent = "Anmeldedaten werden gelöscht und Neustart…";
-                        try {
-                            const body = new URLSearchParams(); body.set("confirm", "BESTÄTIGEN");
-                            await fetch("/erase", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body, });
-                            if (els.btnReload) els.btnReload.style.display = "inline-block";
-                        } catch (e) {
-                            console.error(e);
-                            if (els.eraseMsg) els.eraseMsg.textContent = "Fehler beim Anfordern der Löschung.";
-                            els.btnErase.disabled = false; els.btnErase.textContent = "🗑️ Anmeldedaten löschen und neu starten";
-                        }
-                    });
-                }
-                if (els.btnReload) els.btnReload.addEventListener("click", () => location.reload());
+                setupErase("ap");
 
                 // Prefill config if available
                 (async () => {
